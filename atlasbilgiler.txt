@@ -1,0 +1,7 @@
+Username
+black4rtscode_db_user
+Password
+NqqtB6BJSPh4Mwmv
+
+npm install mongodb
+mongodb+srv://<db_username>:<db_password>@arenecluster.o8ojkgf.mongodb.net/?retryWrites=true&w=majority&appName=arenecluster

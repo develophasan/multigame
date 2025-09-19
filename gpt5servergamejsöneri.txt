@@ -1,0 +1,280 @@
+1) Kritik hata: change-shape içinde await game.save()
+
+activeGames’ten gelen game bir Mongoose dokümanı değil → .save() hata verir.
+
+Düzeltme
+
+socket.on('change-shape', async (data) => {
+  try {
+    const { gameId, shape } = data;
+    const game = activeGames.get(gameId);
+    if (!game) return;
+    const player = game.players.find(p => p.socketId === socket.id);
+    if (player) {
+      player.shape = shape;
+-     await game.save();
++     if (dbConnected) {
++       await Game.findOneAndUpdate({ gameId }, game, { upsert: true });
++     }
+      io.to(gameId).emit('player-shape-changed', {
+        player,
+        players: game.players
+      });
+    }
+  } catch (error) {
+    socket.emit('error', { message: error.message });
+  }
+});
+
+2) Oyun mekaniğini sunucu-otoriter yap (cooldown/menzil/hasar)
+
+Şu an istemci player-damage gönderip can düşürüyor → kolayca hile yapılır.
+Aşağıdaki eklemelerle sunucu hesaplasın, istemci sadece “ateş ettim” desin.
+
+2.1 Sabitler ve runtime alanlar
++// ---- Arena Mekanikleri ----
++const TICK_HZ = 60;
++const CANVAS = { w: 800, h: 600 };
++const PLAYER_RADIUS = 18;
++const PROJECTILE_RADIUS = 7;
++const MATCH_SECONDS = 300;
++const RESPAWN_MS = 1500;
++const SKILLS = {
++  fire:      { cd: 3,  dmg: 25, range: 150, speed: 480, color: '#ff4444' },
++  water:     { cd: 4,  dmg: 20, range: 120, speed: 460, color: '#4444ff' },
++  air:       { cd: 2,  dmg: 15, range: 100, speed: 520, color: '#44ffff' },
++  earth:     { cd: 5,  dmg: 35, range:  80, speed: 420, color: '#8B4513' },
++  lightning: { cd: 6,  dmg: 40, range: 200, speed: 560, color: '#ffff44' },
++};
++function randSpawn() {
++  const m=40; return { x: m + Math.random()*(CANVAS.w-2*m), y: m + Math.random()*(CANVAS.h-2*m) };
++}
+
+2.2 Oda oluşturulurken runtime alanlarını hazırla
+app.post('/api/create-game', async (req, res) => {
+  try {
+    const { nickname } = req.body;
+    const gameId = uuidv4().substring(0, 8).toUpperCase();
+    const hostId = uuidv4();
+    const game = {
+      gameId,
+      hostId: hostId,
+      hostNickname: nickname,
+      players: [],
+      gameState: 'lobby',
+      createdAt: new Date(),
++     // runtime alanları:
++     startedAt: null,
++     remaining: MATCH_SECONDS,
++     projectiles: [],
++     lastShotAt: {}, // { [socketId_skill]: timestamp }
+    };
+
+2.3 Oyunu başlatırken oyuncu HP/istatistik reseti
+socket.on('start-game', async (data) => {
+  ...
+  console.log('🚀 Starting game for all players...');
+  game.gameState = 'playing';
++ game.startedAt = Date.now();
++ game.remaining = MATCH_SECONDS;
++ game.projectiles = [];
++ game.lastShotAt = {};
++ for (const p of game.players) {
++   p.health = 100;
++   p.maxHealth = 100;
++   p.stats = { damage: 0, kills: 0, deaths: 0 };
++   p.position = randSpawn();
++   p.deadUntil = null;
++   p.currentSkill = 'fire';
++ }
+  ...
+  io.to(gameId).emit('game-started', {
+    players: game.players
+  });
+
+2.4 Hareket güvenliği (canvas sınırı)
+socket.on('player-move', (data) => {
+  const { gameId, position } = data;
+  const game = activeGames.get(gameId);
+  if (!game || game.gameState !== 'playing') return;
+
+  const player = game.players.find(p => p.socketId === socket.id);
+  if (player) {
+-   player.position = position;
++   if (player.deadUntil && Date.now() < player.deadUntil) return;
++   const x = Math.max(20, Math.min(CANVAS.w-20, position.x));
++   const y = Math.max(20, Math.min(CANVAS.h-20, position.y));
++   player.position = { x, y };
+    socket.to(gameId).emit('player-moved', {
+      playerId: socket.id,
+-     position
++     position: player.position
+    });
+  }
+});
+
+2.5 Ateş etme: cooldown + menzil doğrulaması, mermi yarat
+socket.on('player-shoot', (data) => {
+  const { gameId, projectile } = data;
+  const game = activeGames.get(gameId);
+  if (!game || game.gameState !== 'playing') return;
+
+- // Broadcast projectile to all players (mevcut kod)
+- io.to(gameId).emit('projectile-fired', { projectile });
+
++ // Sunucu-otoriter: cooldown, menzil kontrolü, mermi oluştur
++ const owner = game.players.find(p => p.socketId === socket.id);
++ const target = game.players.find(p => p.socketId === projectile?.targetId);
++ if (!owner || !target) return;
++ if (owner.deadUntil && Date.now() < owner.deadUntil) return;
++
++ const skillKey = owner.currentSkill || 'fire';
++ const skill = SKILLS[skillKey] || SKILLS.fire;
++ // cooldown kontrol
++ const key = `${socket.id}_${skillKey}`;
++ const last = game.lastShotAt[key] || 0;
++ if (Date.now() - last < skill.cd * 1000) return;
++
++ // menzil
++ const dist = Math.hypot(target.position.x - owner.position.x, target.position.y - owner.position.y);
++ if (dist > skill.range) return;
++
++ game.lastShotAt[key] = Date.now();
++
++ // yön ve hız
++ const dx = target.position.x - owner.position.x;
++ const dy = target.position.y - owner.position.y;
++ const d = Math.max(1, Math.hypot(dx,dy));
++ const vx = (dx/d) * skill.speed;
++ const vy = (dy/d) * skill.speed;
++
++ const pr = {
++   id: `${socket.id}-${Date.now()}-${Math.random()}`,
++   ownerId: socket.id,
++   targetId: target.socketId,
++   x: owner.position.x,
++   y: owner.position.y,
++   vx, vy, skillKey,
++   color: skill.color
++ };
++ game.projectiles.push(pr);
++ io.to(gameId).emit('projectile-fired', { projectile: { id: pr.id, x: pr.x, y: pr.y, targetId: pr.targetId, color: pr.color, speed: 8 } });
+});
+
+2.6 İstemciden gelen player-damage’ı devre dışı bırak
+
+(Artık sunucu hesaplıyor.)
+
+-socket.on('player-damage', (data) => { ... });
++// İstemciden hasar kabul ETME: sunucu hesaplıyor (güvenlik).
+
+2.7 Sunucu tick: mermi ilerletme, çarpışma, hasar, ölüm/respawn, maç süresi
++// ---- Sunucu Tick Döngüsü (60 Hz) ----
++setInterval(() => {
++  const now = Date.now();
++  for (const [gameId, game] of activeGames) {
++    if (game.gameState !== 'playing') continue;
++
++    // maç süresi
++    if (game.startedAt) {
++      const elapsed = Math.floor((now - game.startedAt) / 1000);
++      game.remaining = Math.max(0, MATCH_SECONDS - elapsed);
++      if (game.remaining <= 0) {
++        game.gameState = 'lobby';
++        for (const p of game.players) p.isReady = false;
++        io.to(gameId).emit('return-to-lobby', { message: 'Süre bitti, lobiye dönüldü.' });
++        continue;
++      }
++    }
++
++    // mermiler
++    const dt = 1 / TICK_HZ;
++    const keep = [];
++    for (const pr of game.projectiles) {
++      pr.x += pr.vx * dt;
++      pr.y += pr.vy * dt;
++      // sınır
++      if (pr.x<0||pr.x>CANVAS.w||pr.y<0||pr.y>CANVAS.h) continue;
++
++      const target = game.players.find(p => p.socketId === pr.targetId);
++      if (!target) continue;
++      if (target.deadUntil && now < target.deadUntil) { keep.push(pr); continue; }
++
++      // çarpışma
++      const hit = Math.hypot(pr.x - target.position.x, pr.y - target.position.y) <= (PLAYER_RADIUS + PROJECTILE_RADIUS);
++      if (hit) {
++        const owner = game.players.find(p => p.socketId === pr.ownerId);
++        const skill = SKILLS[pr.skillKey] || SKILLS.fire;
++        if (owner && target) {
++          target.health = (typeof target.health==='number' ? target.health : 100) - skill.dmg;
++          owner.stats = owner.stats || { damage:0,kills:0,deaths:0 };
++          owner.stats.damage += skill.dmg;
++          io.to(gameId).emit('player-took-damage', { targetId: target.socketId, newHealth: Math.max(0, target.health) });
++
++          if (target.health <= 0) {
++            target.stats = target.stats || { damage:0,kills:0,deaths:0 };
++            target.stats.deaths += 1;
++            owner.stats.kills += 1;
++            target.deadUntil = now + RESPAWN_MS;
++            io.to(gameId).emit('player-died', { targetId: target.socketId, killerId: owner.socketId });
++          }
++        }
++        continue; // mermi yok oldu
++      }
++      keep.push(pr);
++    }
++    game.projectiles = keep;
++
++    // respawn
++    for (const p of game.players) {
++      if (p.deadUntil && now >= p.deadUntil) {
++        p.deadUntil = null;
++        p.health = 100;
++        p.position = randSpawn();
++        io.to(gameId).emit('player-moved', { playerId: p.socketId, position: p.position });
++      }
++    }
++  }
++}, 1000 / TICK_HZ);
+
+3) “Oda dolu / isim çakışması” hazır; ek güvenlik
+
+join-game içinde var: iyi.
+
+Ek olarak players.length === 0 olunca host’u sıfırla (zaten disconnect’te temizliyorsun).
+
+leave-game’de herkesi lobye atıyorsun: tamam.
+
+4) İstemci (game.js) ile olay adları UYUMLU
+
+Benim verdiğim game.js sürümü zaten senin event’lerinle uyumlu:
+
+player-move (sende var)
+
+player-shoot (sende var, artık sunucu otoriter yaptı)
+
+player-took-damage, player-died, projectile-fired (sende var)
+
+game-started, player-joined, player-left, player-ready-changed, player-shape-changed (var)
+
+Ek olarak game.js’te player-damage gönderilmiyor; bu endpoint’i kapattık (sunucu hesaplıyor).
+
+5) Küçük temizlikler
+
+join-game’de DB’den gelen game bir Mongoose dokümanı olabilir; activeGames.set(gameId, game.toObject ? game.toObject() : game) yaparak her zaman düz objeye indirgemek istersen ekleyebilirsin.
+
+Fallback local Mongo bağlandıysa koleksiyon ismi aynı (multiplayer-game) olduğundan sorun yok.
+
+app.use(express.static('public')) tamam; istemci dosyaları public/ altında dursun.
+
+Özet
+
+change-shape’daki .save() hatasını gider.
+
+player-damage’ı kaldır; hasarı server tick içinde mermi-çarpışmasıyla hesapla.
+
+Cooldown/menzil/respawn/süre → sunucuda.
+
+Oyun başladığında HP/istatistik reseti ve rastgele spawn.
+
+Bu yamaları uygularsan, paylaştığım gelişmiş game.js ile birlikte oyun mekanikleri doğru, stabil ve hileye dayanıklı çalışır. İstersen tek bir dosya diff’i şeklinde de birleştirip gönderebilirim.

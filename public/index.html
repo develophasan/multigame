@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Multiplayer Game System</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Ana Menü -->
+    <div id="main-menu" class="screen">
+      <div class="container">
+        <h1>Multiplayer Game</h1>
+        <div class="menu-buttons">
+          <button id="create-game-btn" class="btn btn-primary">Oyun Oluştur</button>
+          <button id="join-game-btn" class="btn btn-secondary">Oyuna Katıl</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Oyun Oluşturma -->
+    <div id="create-game" class="screen hidden">
+      <div class="container">
+        <h2>Oyun Oluştur</h2>
+        <div class="form-group">
+          <input type="text" id="host-nickname" placeholder="Nickname" maxlength="20" />
+        </div>
+        <div class="actions-row">
+          <button id="create-game-submit" class="btn btn-primary">Oyun Oluştur</button>
+          <button id="back-to-menu" class="btn btn-secondary">Geri</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Oyuna Katılma -->
+    <div id="join-game" class="screen hidden">
+      <div class="container">
+        <h2>Oyuna Katıl</h2>
+        <div class="form-group">
+          <input type="text" id="join-nickname" placeholder="Nickname" maxlength="20" />
+        </div>
+        <div class="form-group">
+          <input type="text" id="game-code" placeholder="Oyun Kodu" maxlength="8" />
+        </div>
+        <div class="actions-row">
+          <button id="join-game-submit" class="btn btn-primary">Oyuna Katıl</button>
+          <button id="back-to-menu-2" class="btn btn-secondary">Geri</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lobi -->
+    <div id="lobby" class="screen hidden">
+      <div class="container">
+        <h2>Lobi</h2>
+        <div class="game-info">
+          <p>Oyun Kodu: <span id="game-code-display"></span></p>
+          <p>Oyuncu Sayısı: <span id="player-count"></span>/8</p>
+        </div>
+
+        <div class="players-list">
+          <h3>Oyuncular</h3>
+          <div id="players-container"></div>
+        </div>
+
+        <div class="shape-selection">
+          <h3>Şekil Seç</h3>
+          <div class="shape-buttons">
+            <button class="shape-btn active" data-shape="circle">Daire</button>
+            <button class="shape-btn" data-shape="square">Kare</button>
+            <button class="shape-btn" data-shape="triangle">Üçgen</button>
+            <button class="shape-btn" data-shape="rectangle">Dikdörtgen</button>
+          </div>
+        </div>
+
+        <div class="lobby-actions">
+          <button id="toggle-ready" class="btn btn-ready">Hazır Değilim</button>
+          <button id="start-game" class="btn btn-start hidden">Oyunu Başlat</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Oyun Ekranı -->
+    <div id="game-screen" class="screen hidden">
+      <!-- Sabit TOPBAR -->
+      <div class="topbar">
+        <div class="topbar-left">
+          <span id="player-name-display" class="player-nickname">Oyuncu</span>
+          <div class="health-bar">
+            <div id="health-fill" class="health-fill"></div>
+            <span id="health-text">100/100</span>
+          </div>
+        </div>
+
+        <div class="topbar-center">
+          <span id="game-timer" class="timer">05:00</span>
+          <div class="score-stats">
+            <span>⚔️ <span id="damage-stat">0</span></span>
+            <span>☠️ <span id="kills-stat">0</span></span>
+            <span>💀 <span id="deaths-stat">0</span></span>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <button id="toggle-sound" class="icon-btn" title="Sesi Kapat">🔊</button>
+          <button id="toggle-music" class="icon-btn" title="Müziği Kapat">🎵</button>
+          <button id="leave-game" class="btn btn-danger">Oyundan Çık</button>
+        </div>
+      </div>
+
+      <!-- OYUN ALANI (Topbar altında) -->
+      <div class="game-shell">
+        <div class="canvas-wrap">
+          <canvas id="game-canvas" width="800" height="600" aria-label="Game Canvas"></canvas>
+
+          <!-- SKILL BAR (canvas içinde, altta ortalı) -->
+          <div class="skill-bar" role="toolbar" aria-label="Skills">
+            <div class="skill-slot" data-skill="1">
+              <div class="skill-icon fire">1</div>
+              <div class="skill-cooldown"></div>
+              <div class="skill-key">1</div>
+            </div>
+            <div class="skill-slot" data-skill="2">
+              <div class="skill-icon water">2</div>
+              <div class="skill-cooldown"></div>
+              <div class="skill-key">2</div>
+            </div>
+            <div class="skill-slot" data-skill="3">
+              <div class="skill-icon air">3</div>
+              <div class="skill-cooldown"></div>
+              <div class="skill-key">3</div>
+            </div>
+            <div class="skill-slot" data-skill="4">
+              <div class="skill-icon earth">4</div>
+              <div class="skill-cooldown"></div>
+              <div class="skill-key">4</div>
+            </div>
+            <div class="skill-slot" data-skill="5">
+              <div class="skill-icon lightning">5</div>
+              <div class="skill-cooldown"></div>
+              <div class="skill-key">5</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Skor Ekranı -->
+    <div id="score-screen" class="screen hidden">
+      <div class="container">
+        <h2>Oyun Bitti!</h2>
+        <div class="score-board">
+          <div class="winner">
+            <h3>🏆 Kazanan: <span id="winner-name"></span></h3>
+          </div>
+          <div class="score-list">
+            <h3>Skor Tablosu</h3>
+            <div id="score-list"></div>
+          </div>
+        </div>
+        <div class="score-actions">
+          <button id="back-to-lobby" class="btn btn-primary">Lobiye Dön</button>
+          <button id="back-to-main" class="btn btn-secondary">Ana Sayfaya Dön</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
